@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 存档数据（含用户隐私）
+pii_save.json
+
+# 系统文件
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 日志
+*.log
+
+# 3D模块（已归档，不需要上传）
+assets/3d/
+ui/viewer_3d.py
+test_3d.py
+3D
+assets/tmp
+
+# 临时文件
+*.tmp
+quick_check.py

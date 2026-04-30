@@ -1,0 +1,8 @@
+# 桌面宠物 Pii - 项目依赖
+# 安装命令: pip install -r requirements.txt
+
+# UI框架 - 透明窗体实现
+PySide6>=6.5.0
+
+# 输入监听 - 键盘鼠标频率感知
+pynput>=1.7.6
