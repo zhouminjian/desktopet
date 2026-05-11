@@ -12,32 +12,42 @@ import os
 
 # 确保模块导入路径正确
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QSizePolicy
-from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QObject
 from PySide6.QtGui import QColor
 
-from core.engine import PetEngine, PetState, PetStats, PersonalityTrait, PersonalityDialogues, GrowthStage
+from core.engine import PetEngine, PetState, PetStats, PersonalityTrait, GrowthStage
+from data.dialogues import PersonalityDialogues
 from core.database import PetDatabase
 from core.perception import UserActivityMonitor
+from core.config import PetConfig
 from ui.main_window import PetMainWindow
 from ui.components import SpeechBubble, FloatingText
+from ui.bubble_manager import BubbleManager
+
+
+class CrossThreadSignals(QObject):
+    """跨线程信号载体，用于将 pynput 后台线程的安全地派发到主线程"""
+    typing_intensive = Signal(int)
 
 
 class PersonalitySelector(QDialog):
     """
     性格选择对话框
-    让用户选择宠物的性格
+    让用户选择宠物的性格，支持预填当前值
     """
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, initial_name: str = "Pii", initial_personality: PersonalityTrait = None):
         super().__init__(parent)
-        
+
         self.selected_personality = None
-        self.pet_name = "Pii"  # 默认宠物名称
-        
-        self.setWindowTitle("选择你的宠物性格")
+        self.pet_name = "Pii"
+
+        is_edit = initial_personality is not None
+        self.setWindowTitle("更改宠物名字和性格" if is_edit else "选择你的宠物性格")
         self.setFixedSize(700, 320)
         self.setStyleSheet("""
             QDialog {
@@ -64,29 +74,30 @@ class PersonalitySelector(QDialog):
                 background-color: #d0e8f0;
             }
         """)
-        
+
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
-        
+
         # 标题
-        title = QLabel("🐱 请选择你的 Pii 的性格：")
+        title_text = "🐱 更改宠物名字和性格：" if is_edit else "🐱 请选择你的 Pii 的性格："
+        title = QLabel(title_text)
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #4a90d9;")
         layout.addWidget(title)
-        
-        # 说明文字
+
         desc = QLabel("性格会影响 Pii 的行为方式和说话风格哦~")
         desc.setStyleSheet("font-size: 12px; color: #666; margin-bottom: 10px;")
         layout.addWidget(desc)
-        
+
         # 宠物名称输入框
         name_layout = QHBoxLayout()
         name_label = QLabel("宠物名称：")
         name_label.setStyleSheet("font-size: 13px; color: #333;")
         name_layout.addWidget(name_label)
-        
+
         self._name_input = QLineEdit()
         self._name_input.setPlaceholderText("Pii")
+        self._name_input.setText(initial_name)
         self._name_input.setStyleSheet("""
             QLineEdit {
                 font-family: "Microsoft YaHei";
@@ -103,50 +114,99 @@ class PersonalitySelector(QDialog):
         self._name_input.setFixedWidth(200)
         name_layout.addWidget(self._name_input)
         name_layout.addStretch()
-        
+
         layout.addLayout(name_layout)
         layout.addSpacing(10)
-        
-        # 按钮布局 - 自适应宽度
+
+        # 性格按钮布局
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
-        
+
         personalities = [
             (PersonalityTrait.PLAYFUL, "活泼", "好动爱玩，元气满满"),
             (PersonalityTrait.GENTLE, "温柔", "温顺粘人，安静陪伴"),
             (PersonalityTrait.LAZY, "慵懒", "爱睡爱躺，佛系生活"),
             (PersonalityTrait.CURIOUS, "好奇", "探索发现，十万个为什么"),
         ]
-        
+
+        self._personality_btns = {}
         for personality, name, desc_text in personalities:
             btn = QPushButton(f"{name}\n{desc_text}")
             btn.setMinimumHeight(90)
             btn.setMinimumWidth(140)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setStyleSheet("""
-                QPushButton {
-                    font-family: "Microsoft YaHei";
-                    font-size: 12px;
-                    padding: 6px;
-                    border-radius: 8px;
-                    border: 2px solid #ddd;
-                    background-color: white;
-                }
-                QPushButton:hover {
-                    background-color: #fff3e0;
-                    border-color: #ff9800;
-                }
-            """)
+
+            is_current = (personality == initial_personality)
+            btn.setStyleSheet(self._btn_style(selected=is_current))
             btn.clicked.connect(lambda checked, p=personality: self._on_select(p))
-            btn_layout.addWidget(btn, 1)  # 权重1，平均分配空间
-        
+            btn_layout.addWidget(btn, 1)
+            self._personality_btns[personality] = btn
+
         layout.addLayout(btn_layout)
+
+        # 初始选中
+        if initial_personality is not None:
+            self.selected_personality = initial_personality
+
+        # 确定按钮 - 居中
+        confirm_layout = QHBoxLayout()
+        confirm_layout.addStretch()
+        self._confirm_btn = QPushButton("确 定")
+        self._confirm_btn.setMinimumWidth(120)
+        self._confirm_btn.setMinimumHeight(36)
+        self._confirm_btn.setStyleSheet("""
+            QPushButton {
+                font-family: "Microsoft YaHei";
+                font-size: 14px;
+                font-weight: bold;
+                padding: 8px 30px;
+                border-radius: 8px;
+                border: 2px solid #4a90d9;
+                background-color: #4a90d9;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+        """)
+        self._confirm_btn.clicked.connect(self._on_confirm)
+        confirm_layout.addWidget(self._confirm_btn)
+        confirm_layout.addStretch()
+
+        layout.addLayout(confirm_layout)
         layout.addStretch()
-    
+
+    @staticmethod
+    def _btn_style(selected: bool = False) -> str:
+        base = """
+            QPushButton {
+                font-family: "Microsoft YaHei";
+                font-size: 12px;
+                padding: 6px;
+                border-radius: 8px;
+                border: 2px solid #ddd;
+                background-color: white;
+            }
+            QPushButton:hover {
+                background-color: #fff3e0;
+                border-color: #ff9800;
+            }
+        """
+        if selected:
+            base += """
+            QPushButton {
+                border-color: #4a90d9;
+                background-color: #e8f4f8;
+            }
+            """
+        return base
+
     def _on_select(self, personality: PersonalityTrait):
-        """选择性格"""
         self.selected_personality = personality
-        # 获取用户输入的名称，如果没输入则使用默认值
+        for p, btn in self._personality_btns.items():
+            btn.setStyleSheet(self._btn_style(selected=(p == personality)))
+
+    def _on_confirm(self):
         name = self._name_input.text().strip()
         if name:
             self.pet_name = name
@@ -204,85 +264,70 @@ def main():
     print("[启动] 创建主窗口...")
     window = PetMainWindow(engine)
     
-    # 创建对话气泡
+    # 创建对话气泡和管理器
     bubble = SpeechBubble()
-    window.set_bubble(bubble, QPoint(0, -70))  # 设置气泡跟随窗口
-    
+    window.set_bubble(bubble, QPoint(0, -70))
+
+    bubble_mgr = BubbleManager()
+    bubble_mgr.setup(bubble, window)
+    window.bubble_mgr = bubble_mgr
+
     # 创建浮动文字组件(用于显示数值变化)
     floating_text = FloatingText()
-    
+
     # 初始化感知系统
     monitor = UserActivityMonitor()
-    
-    # 饥饿提示计时器（防止重复提示）
-    _last_hunger_notify_time = 0
-    
+
     # 连接信号 - 实现前后端通信
     def on_stats_change(stats: PetStats):
-        """属性变化时更新气泡提示 - 使用性格对话"""
-        nonlocal _last_hunger_notify_time
+        """属性变化时触发气泡提示 + 自动存档"""
         import time
-        
-        # 饿了时显示性格化的提示（阈值35，每30秒最多提示一次）
         current_time = time.time()
-        if stats.hunger <= 35 and not bubble.isVisible():
-            if current_time - _last_hunger_notify_time > 30:  # 30秒间隔
-                dialogue = engine.get_dialogue("hungry")
-                hunger_level = "很饿" if stats.hunger < 20 else "有点饿"
-                bubble.show_text(f"{dialogue}\n[{hunger_level}] 饱食度: {stats.hunger:.0f}/100\n快给我喂食吧！", duration=5000)
-                bubble.position_beside(window, QPoint(0, -70))
-                _last_hunger_notify_time = current_time
-        
-        # 实时存档：30秒防抖，避免频繁IO
+
+        # 睡眠状态下不触发常规状态气泡和强制动画
+        if engine.state != PetState.SLEEP:
+            if stats.hunger <= PetConfig.HUNGER_LOW_THRESHOLD:
+                bubble_mgr.show_hunger(engine)
+
+            if stats.happiness < PetConfig.HAPPINESS_LOW_THRESHOLD:
+                bubble_mgr.show_happiness_low(engine, animation_callback=window._start_force_animation)
+
         _last_save = getattr(on_stats_change, '_last_save', 0)
-        if current_time - _last_save >= 30:
-            save_data = engine.to_dict()
-            db.save(save_data)
+        if current_time - _last_save >= PetConfig.AUTO_SAVE_INTERVAL:
+            db.save(engine.to_dict())
             on_stats_change._last_save = current_time
-    
+
     def on_state_change(state: PetState):
-        """状态变化时输出日志"""
         state_names = {
-            PetState.IDLE: "发呆",
-            PetState.WALK: "行走",
-            PetState.SLEEP: "睡觉",
-            PetState.EATING: "进食",
-            PetState.DRAGGING: "被拖拽"
+            PetState.IDLE: "发呆", PetState.WALK: "行走",
+            PetState.SLEEP: "睡觉", PetState.EATING: "进食",
+            PetState.DRAGGING: "被拖拽",
         }
         print(f"[状态] 切换至: {state_names.get(state, state.name)}")
-    
+
     def on_level_up(new_level: int):
-        """升级回调"""
-        print(f"[成长] 🎉 升级到 Lv.{new_level}！")
-        bubble.show_text(f"🎉 升级啦！现在 Lv.{new_level}\n下一级需要: {engine.get_exp_for_next_level()} 经验", duration=3000)
-        bubble.position_beside(window, QPoint(0, -90))
-    
+        print(f"[成长] 升级到 Lv.{new_level}！")
+        bubble_mgr.show_level_up(new_level, engine.get_exp_for_next_level())
+
     def on_stage_change(new_stage: GrowthStage):
-        """成长阶段变化回调"""
-        print(f"[成长] 🌟 进入{new_stage.display_name}阶段！")
-        stage_messages = {
-            GrowthStage.TEEN: "我长大一点了！开始对世界好奇~",
-            GrowthStage.ADULT: "我已经完全长大了！会更好地陪伴主人！"
-        }
-        message = stage_messages.get(new_stage, "成长了！")
-        bubble.show_text(f"🌟 {message}", duration=4000)
-        bubble.position_beside(window, QPoint(0, -90))
-    
-    # 设置用户活动监听回调
+        print(f"[成长] 进入{new_stage.display_name}阶段！")
+        bubble_mgr.show_stage_change(new_stage.name)
+
+    _last_typing_remind_time = 0.0
+
     def on_typing_intensive(key_count: int):
-        """检测到高强度打字时，宠物给予鼓励"""
-        if not bubble.isVisible():
-            encourage_lines = [
-                "主人加油！打字辛苦了~ 休息一下喝点水吧！",
-                "哇，主人工作好认真！别忘了我一直在陪着你哦~",
-                "检测到高强度工作！送上一杯虚拟咖啡 ☕",
-                "工作再忙也要记得休息，我会一直在这里的~"
-            ]
-            import random
-            message = random.choice(encourage_lines)
-            bubble.show_text(message, duration=5000)
-            bubble.position_beside(window, QPoint(0, -80))
-    
+        nonlocal _last_typing_remind_time
+        import time
+        now = time.time()
+        if now - _last_typing_remind_time < PetConfig.TYPING_INTENSIVE_COOLDOWN:
+            return
+        _last_typing_remind_time = now
+        bubble_mgr.show_typing_encourage()
+
+    # 跨线程信号：pynput 回调在后台线程触发，通过信号安全地派发到主线程
+    cross_signals = CrossThreadSignals()
+    cross_signals.typing_intensive.connect(on_typing_intensive)
+
     # 绑定引擎回调
     engine.on_stats_change = on_stats_change
     engine.on_state_change = on_state_change
@@ -293,15 +338,10 @@ def main():
     window.signals.stats_updated.connect(on_stats_change)
     window.signals.state_changed.connect(on_state_change)
     
-    # 绑定抚摸信号 - 显示性格对话和动作
+    # 绑定抚摸信号
     def on_pet():
-        """被抚摸时显示性格化对话和动作"""
-        dialogue = engine.get_dialogue("petted")
-        bubble.show_text(dialogue, duration=2500)
-        bubble.position_beside(window, QPoint(0, -60))
-        # 触发抚摸动作
         window.on_interact("pet")
-    
+
     window.signals.pet_requested.connect(on_pet)
     
     # 绑定喂食信号 - 触发动作
@@ -332,24 +372,52 @@ def main():
     
     window.signals.hunger_changed.connect(on_hunger_change)
     window.signals.exp_gained.connect(on_exp_gain)
+
+    # 绑定更改名字和性格信号
+    def on_change_personality():
+        current_personality = engine.get_primary_personality()
+        dialog = PersonalitySelector(
+            initial_name=engine.name,
+            initial_personality=current_personality,
+        )
+        result = dialog.exec()
+        if result == QDialog.Accepted and dialog.selected_personality:
+            engine.name = dialog.pet_name
+            engine.personality = [dialog.selected_personality]
+            db.save(engine.to_dict())
+            bubble.show_text(
+                f"好~以后叫我{engine.name}吧！\n性格变成了{dialog.selected_personality.value}~",
+                duration=4000,
+            )
+            QTimer.singleShot(100, window._update_bubble_position)
+            print(f"[设置] 更改成功: {engine.name} ({dialog.selected_personality.value})")
+        else:
+            bubble.show_text("没关系~保持现在的样子就好！", duration=3000)
+            QTimer.singleShot(100, window._update_bubble_position)
+
+    window.signals.change_personality_requested.connect(on_change_personality)
     
     # 启动活动监视器
-    monitor.on_typing_intensive = on_typing_intensive
+    monitor.on_typing_intensive = lambda key_count: cross_signals.typing_intensive.emit(key_count)
     monitor.start()
+
+    # 定时检查打字频率窗口（从主线程调用，避免 pynput 回调线程阻塞）
+    _perception_timer = QTimer()
+    _perception_timer.timeout.connect(monitor.check_window)
+    _perception_timer.start(PetConfig.UPDATE_TIMER_INTERVAL)
     
     # 显示主窗口
     window.show()
     
-    # 显示欢迎气泡 - 使用性格化问候（简化版，避免超出屏幕）
+    # 显示欢迎气泡
     greeting = engine.get_dialogue("greeting")
     exp_needed = engine.get_exp_for_next_level()
     bubble.show_text(
         f"嗨！我是{engine.name}~ {greeting}\n"
         f"Lv.{engine.stats.level} | 经验:{engine.stats.exp}/{exp_needed}\n"
-        f"右键点击喂食", 
-        duration=4000
+        f"右键点击喂食",
+        duration=PetConfig.BUBBLE_GREETING_DURATION,
     )
-    # 使用智能位置更新（根据贴边位置自动调整）
     QTimer.singleShot(100, window._update_bubble_position)
     
     print("[启动] 桌面宠物已启动!")

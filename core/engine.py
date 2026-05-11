@@ -10,103 +10,12 @@ from datetime import datetime
 import json
 import os
 
+from core.config import PetConfig
+from core.enums import PetState, GrowthStage, PersonalityTrait
+from data.dialogues import PersonalityDialogues
 
-class PetState(Enum):
-    """宠物状态枚举"""
-    IDLE = auto()       # 静止/发呆
-    WALK = auto()       # 行走
-    SLEEP = auto()      # 睡觉
-    EATING = auto()     # 进食中
-    DRAGGING = auto()   # 被拖拽中
-
-
-class GrowthStage(Enum):
-    """成长阶段枚举"""
-    BABY = auto()       # 幼年 - 依赖、撒娇多
-    TEEN = auto()       # 少年 - 好奇、偶尔倔强
-    ADULT = auto()      # 青年 - 责任感与陪伴感强
-    
-    @property
-    def display_name(self) -> str:
-        """显示名称"""
-        names = {
-            GrowthStage.BABY: "幼年",
-            GrowthStage.TEEN: "少年",
-            GrowthStage.ADULT: "青年"
-        }
-        return names.get(self, "未知")
-
-
-class PersonalityTrait(Enum):
-    """性格标签枚举"""
-    PLAYFUL = "活泼"     # 喜欢玩耍，互动频率高
-    GENTLE = "温柔"      # 温顺，撒娇多
-    LAZY = "慵懒"        # 容易困，移动少
-    CURIOUS = "好奇"     # 探索欲强
-
-
-class PersonalityDialogues:
-    """
-    性格对话库
-    根据不同性格返回不同风格的话术
-    """
-    
-    DIALOGUES = {
-        PersonalityTrait.PLAYFUL: {
-            "hungry": ["饿死啦饿死啦！快给我吃的！", "肚子咕咕叫~我要吃饭！", "主人主人，零食时间到啦！"],
-            "petted": ["哈哈好痒！再来再来！", "耶！主人陪我玩啦！", "蹭蹭~最喜欢主人了！"],
-            "idle": ["无聊死了...来玩嘛~", "那边有什么？让我看看！", "我在数蚂蚁，1只2只..."],
-            "greeting": ["主人你来啦！想我了吗？", "耶！新的一天开始咯！", "今天也要元气满满！"]
-        },
-        PersonalityTrait.GENTLE: {
-            "hungry": ["那个...我有点饿了...", "如果可以的话，能给我一点吃的吗？", "肚子有点不舒服..."],
-            "petted": ["好温暖...", "被主人摸摸好幸福...", "最喜欢主人的手了..."],
-            "idle": ["静静陪伴在主人身边，真好...", "阳光好舒服...", "想就这样一直陪着你..."],
-            "greeting": ["欢迎回来，我一直在等你...", "能见到你真好...", "今天也辛苦了..."]
-        },
-        PersonalityTrait.LAZY: {
-            "hungry": ["饿了...但是不想动...", "有没有食物自动飞到我嘴里...", "吃饭好麻烦..."],
-            "petted": ["呼噜...好困...", "摸完让我继续睡...", "嗯...还行吧..."],
-            "idle": ["ZZZ...", "睡觉是最好的...", "动一动好累..."],
-            "greeting": ["哦...你来了...", "让我再睡五分钟...", "早...早安..."]
-        },
-        PersonalityTrait.CURIOUS: {
-            "hungry": ["我闻到食物的味道了！在哪？", "让我研究一下这个食物的成分...", "肚子在发出奇怪的声音！"],
-            "petted": ["这就是人类的抚摸行为吗？", "触觉反馈很有趣！", "我的毛发摩擦系数如何？"],
-            "idle": ["那是什么？让我看看！", "为什么云会动？", "这个世界的奥秘太多了..."],
-            "greeting": ["今天有什么新发现？", "我又学会了一招！", "这个世界真奇妙！"]
-        }
-    }
-    
-    @classmethod
-    def get_dialogue(cls, personality: PersonalityTrait, context: str, index: int = None) -> str:
-        """
-        获取性格对话
-        
-        Args:
-            personality: 性格类型
-            context: 情境 (hungry/petted/idle/greeting)
-            index: 指定索引，None则随机
-        
-        Returns:
-            对应话术
-        """
-        import random
-        
-        dialogues = cls.DIALOGUES.get(personality, {}).get(context, ["喵~"])
-        if index is not None:
-            return dialogues[index % len(dialogues)]
-        return random.choice(dialogues)
-    
-    @classmethod
-    def get_random_idle_line(cls, personality: PersonalityTrait) -> str:
-        """获取随机的idle台词"""
-        return cls.get_dialogue(personality, "idle")
-    
-    @classmethod
-    def get_greeting(cls, personality: PersonalityTrait) -> str:
-        """获取欢迎语"""
-        return cls.get_dialogue(personality, "greeting")
+# 向后兼容：允许 `from core.engine import PetState` 等旧写法
+__all__ = ["PetStats", "PetEngine", "PetState", "GrowthStage", "PersonalityTrait"]
 
 
 @dataclass
@@ -122,10 +31,10 @@ class PetStats:
     - exp: 经验值
     - age_days: 年龄(天)
     """
-    hunger: float = 80.0        # 饱食度，默认80
-    happiness: float = 70.0     # 心情值
-    energy: float = 100.0       # 精力值
-    hygiene: float = 100.0      # 清洁度
+    hunger: float = PetConfig.DEFAULT_HUNGER      # 饱食度
+    happiness: float = PetConfig.DEFAULT_HAPPINESS # 心情值
+    energy: float = PetConfig.DEFAULT_ENERGY       # 精力值
+    hygiene: float = PetConfig.DEFAULT_HYGIENE     # 清洁度
     level: int = 1              # 等级
     exp: int = 0                # 经验值
     age_days: int = 0           # 年龄天数
@@ -161,10 +70,10 @@ class PetStats:
     def from_dict(cls, data: dict) -> "PetStats":
         """从字典恢复 - 保持变量名一致"""
         return cls(
-            hunger=data.get("hunger", 80.0),
-            happiness=data.get("happiness", 70.0),
-            energy=data.get("energy", 100.0),
-            hygiene=data.get("hygiene", 100.0),
+            hunger=data.get("hunger", PetConfig.DEFAULT_HUNGER),
+            happiness=data.get("happiness", PetConfig.DEFAULT_HAPPINESS),
+            energy=data.get("energy", PetConfig.DEFAULT_ENERGY),
+            hygiene=data.get("hygiene", PetConfig.DEFAULT_HYGIENE),
             level=data.get("level", 1),
             exp=data.get("exp", 0),
             age_days=data.get("age_days", 0),
@@ -179,31 +88,36 @@ class PetEngine:
     """
     
     # 常量定义 - 便于统一调整
-    HUNGER_DECAY_RATE_BASE = 1.0 / 60  # 基础饱食度每秒衰减值（每分钟掉1点）
-    HUNGER_DECAY_ACTIVE = 2.5 / 60     # 活跃状态下的额外衰减（每分钟额外掉2.5点）
-    HAPPINESS_DECAY_RATE = 0.5      # 心情每秒衰减值
-    ENERGY_DECAY_RATE = 0.3         # 精力每秒衰减值
-    
-    FEED_VALUE = 30.0               # 每次喂食增加的饱食度
-    MAX_STATS = 100.0               # 属性最大值
-    
-    # 活动量统计（用于计算消耗）
-    ACTIVITY_DECAY_THRESHOLD = 100  # 活动量阈值，超过则认为"运动量大"
+    HUNGER_DECAY_RATE = PetConfig.HUNGER_DECAY_RATE             # 清醒饱食度衰减（每分钟掉1点）
+    HUNGER_DECAY_SLEEP_RATE = PetConfig.HUNGER_DECAY_SLEEP_RATE  # 睡眠饱食度衰减（每5分钟掉1点）
+    HAPPINESS_DECAY_RATE = PetConfig.HAPPINESS_DECAY_RATE       # 心情衰减（每分钟掉1点）
+    HAPPINESS_LOW_HUNGER_DECAY_RATE = PetConfig.HAPPINESS_LOW_HUNGER_DECAY_RATE  # 饱食度≤35时心情衰减（每分钟掉2点）
+    ENERGY_SLEEP_RECOVER_RATE = PetConfig.ENERGY_SLEEP_RECOVER_RATE  # 睡眠精力恢复
+    ENERGY_AWAKE_RECOVER_RATE = PetConfig.ENERGY_AWAKE_RECOVER_RATE  # 清醒精力恢复
+    ENERGY_INTERACT_COST = PetConfig.ENERGY_INTERACT_COST      # 交互精力消耗
+
+    HAPPINESS_PET_GAIN = PetConfig.HAPPINESS_PET_GAIN
+    HAPPINESS_FEED_GAIN = PetConfig.HAPPINESS_FEED_GAIN
+
+    FEED_VALUE = PetConfig.FEED_VALUE
+    MAX_STATS = PetConfig.MAX_STATS
+
+    # 成长系统常量
     
     # 成长系统常量
-    EXP_PER_FEED = 10               # 喂食获得经验
-    EXP_PER_PET = 5                 # 抚摸获得经验
-    EXP_PER_MINUTE = 1              # 每分钟在线获得经验
-    LEVEL_UP_BASE = 100             # 每级所需基础经验（逐级增加）
+    EXP_PER_FEED = PetConfig.EXP_PER_FEED               # 喂食获得经验
+    EXP_PER_PET = PetConfig.EXP_PER_PET                 # 抚摸获得经验
+    EXP_PER_MINUTE = PetConfig.EXP_PER_MINUTE_ONLINE              # 每分钟在线获得经验
+    LEVEL_UP_BASE = PetConfig.LEVEL_UP_BASE_EXP             # 每级所需基础经验（逐级增加）
     
     # 成长阶段解锁等级
     STAGE_LEVELS = {
-        GrowthStage.BABY: 1,        # 幼年: 1-4级
-        GrowthStage.TEEN: 5,        # 少年: 5-9级
-        GrowthStage.ADULT: 10       # 青年: 10级以上
+        GrowthStage.BABY: PetConfig.STAGE_LEVELS["BABY"],        # 幼年: 1-4级
+        GrowthStage.TEEN: PetConfig.STAGE_LEVELS["TEEN"],        # 少年: 5-9级
+        GrowthStage.ADULT: PetConfig.STAGE_LEVELS["ADULT"]       # 青年: 10级以上
     }
     
-    def __init__(self, name: str = "Pii"):
+    def __init__(self, name: str = PetConfig.DEFAULT_PET_NAME):
         """
         初始化宠物引擎
         
@@ -233,53 +147,42 @@ class PetEngine:
     def update(self) -> None:
         """
         状态更新 - 每秒调用一次
-        处理属性自然衰减，根据活动量调整饥饿消耗
+        处理属性自然衰减
         """
         now = datetime.now()
         delta_seconds = (now - self._last_update).total_seconds()
         self._last_update = now
-        
-        if delta_seconds < 0.1:
+
+        if delta_seconds < PetConfig.UPDATE_MIN_DELTA:
             return
-        
-        # 检查活动量窗口（每60秒重置一次统计）
-        activity_window_seconds = (now - self._activity_window_start).total_seconds()
-        if activity_window_seconds > 60:
-            self._activity_count = 0
-            self._activity_window_start = now
-        
-        # 计算饥饿衰减率：基础值 + 根据活动量调整
-        # 活动量大（行走多）→ 消耗快，符合常规
-        is_active = self._activity_count > self.ACTIVITY_DECAY_THRESHOLD
-        hunger_decay = self.HUNGER_DECAY_RATE_BASE
-        if is_active:
-            hunger_decay += self.HUNGER_DECAY_ACTIVE  # 活跃状态额外消耗
-        
-        # 饱食度持续下降
-        self.stats.hunger -= hunger_decay * delta_seconds
-        
-        # 饿了影响心情
-        if self.stats.hunger < 30:
-            self.stats.happiness -= self.HAPPINESS_DECAY_RATE * delta_seconds * 2
+
+        # 饱食度衰减：睡眠时慢（5分钟-1点），清醒时正常（1分钟-1点）
+        if self.state == PetState.SLEEP:
+            self.stats.hunger -= self.HUNGER_DECAY_SLEEP_RATE * delta_seconds
+        else:
+            self.stats.hunger -= self.HUNGER_DECAY_RATE * delta_seconds
+
+        # 心情衰减：饱食度≤35时加速衰减（每分钟2点），否则正常（每分钟1点）
+        if self.stats.hunger <= PetConfig.HUNGER_LOW_THRESHOLD:
+            self.stats.happiness -= self.HAPPINESS_LOW_HUNGER_DECAY_RATE * delta_seconds
         else:
             self.stats.happiness -= self.HAPPINESS_DECAY_RATE * delta_seconds
-        
-        # 精力自然衰减
-        if not self.stats.is_sleeping:
-            self.stats.energy -= self.ENERGY_DECAY_RATE * delta_seconds
+
+        # 精力恢复：睡眠快恢复，清醒慢恢复；交互消耗（由 consume_energy 处理）
+        if self.state == PetState.SLEEP:
+            self.stats.energy += self.ENERGY_SLEEP_RECOVER_RATE * delta_seconds
         else:
-            # 睡觉恢复精力
-            self.stats.energy += 5.0 * delta_seconds
-        
+            self.stats.energy += self.ENERGY_AWAKE_RECOVER_RATE * delta_seconds
+
         # 边界检查
         self.stats._clamp_values()
-        
+
         # 每分钟获得在线经验
         exp_elapsed = (now - self._exp_update_time).total_seconds()
-        if exp_elapsed >= 60:
+        if exp_elapsed >= PetConfig.EXP_ONLINE_INTERVAL:
             self.add_exp(self.EXP_PER_MINUTE)
             self._exp_update_time = now
-        
+
         # 通知UI更新
         if self.on_stats_change:
             self.on_stats_change(self.stats)
@@ -352,6 +255,19 @@ class PetEngine:
         """
         self._activity_count += distance
         print(f"[活动] 当前活动量: {self._activity_count} 像素")
+
+    def consume_energy(self, amount: float = None) -> None:
+        """
+        消耗精力值（由交互触发）
+
+        Args:
+            amount: 消耗量，默认取 ENERGY_INTERACT_COST
+        """
+        if amount is None:
+            amount = self.ENERGY_INTERACT_COST
+        self.stats.energy = max(0.0, self.stats.energy - amount)
+        if self.on_stats_change:
+            self.on_stats_change(self.stats)
     
     def feed(self) -> bool:
         """
@@ -364,7 +280,7 @@ class PetEngine:
             return False  # 已经吃饱了
         
         self.stats.hunger = min(self.MAX_STATS, self.stats.hunger + self.FEED_VALUE)
-        self.stats.happiness = min(self.MAX_STATS, self.stats.happiness + 5.0)
+        self.stats.happiness = min(self.MAX_STATS, self.stats.happiness + self.HAPPINESS_FEED_GAIN)
         
         # 获得经验值
         self.add_exp(self.EXP_PER_FEED)
@@ -378,8 +294,8 @@ class PetEngine:
         return True
     
     def pet(self) -> None:
-        """抚摸/互动操作 - 获得经验值"""
-        self.stats.happiness = min(self.MAX_STATS, self.stats.happiness + 10.0)
+        """抚摸/互动操作 - 获得心情和经验值"""
+        self.stats.happiness = min(self.MAX_STATS, self.stats.happiness + self.HAPPINESS_PET_GAIN)
         
         # 获得经验值
         self.add_exp(self.EXP_PER_PET)
@@ -404,17 +320,17 @@ class PetEngine:
         """获取状态描述文本"""
         status_parts = []
         
-        if self.stats.hunger < 20:
+        if self.stats.hunger < PetConfig.HUNGER_CRITICAL_THRESHOLD:
             status_parts.append("饿了")
-        elif self.stats.hunger > 90:
+        elif self.stats.hunger > PetConfig.HUNGER_FULL_THRESHOLD:
             status_parts.append("饱饱的")
         
-        if self.stats.energy < 20:
+        if self.stats.energy < PetConfig.ENERGY_LOW_THRESHOLD:
             status_parts.append("困倦")
-        
-        if self.stats.happiness < 30:
+
+        if self.stats.happiness < PetConfig.HAPPINESS_LOW_THRESHOLD:
             status_parts.append("不开心")
-        elif self.stats.happiness > 80:
+        elif self.stats.happiness > PetConfig.HAPPINESS_HIGH_THRESHOLD:
             status_parts.append("开心")
         
         if not status_parts:
@@ -455,7 +371,7 @@ class PetEngine:
     @classmethod
     def from_dict(cls, data: dict) -> "PetEngine":
         """从字典恢复引擎状态"""
-        engine = cls(name=data.get("name", "Pii"))
+        engine = cls(name=data.get("name", PetConfig.DEFAULT_PET_NAME))
         engine.stats = PetStats.from_dict(data.get("stats", {}))
         
         # 恢复成长阶段

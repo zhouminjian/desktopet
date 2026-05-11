@@ -6,6 +6,7 @@ UI组件模块
 from PySide6.QtWidgets import QWidget, QApplication, QLabel, QGraphicsDropShadowEffect
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect
 from PySide6.QtGui import QColor, QPainter, QBrush, QFont, QPen, QPolygon, QFontMetrics
+from core.config import PetConfig
 
 
 class SpeechBubble(QWidget):
@@ -36,14 +37,20 @@ class SpeechBubble(QWidget):
         
         # 自动隐藏定时器
         self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.hide)
+
+        # 保底隐藏定时器（防止主定时器失效）
+        self._fail_safe_timer = QTimer(self)
+        self._fail_safe_timer.setSingleShot(True)
+        self._fail_safe_timer.timeout.connect(self._fail_safe_hide)
         
         # 箭头方向: "down"/"up"/"left"/"right"
         self._arrow_direction = "down"
-        self._arrow_size = 10
+        self._arrow_size = PetConfig.BUBBLE_ARROW_SIZE
         
         # 默认大小
-        self.setFixedSize(150, 60)
+        self.setFixedSize(PetConfig.BUBBLE_DEFAULT_WIDTH, PetConfig.BUBBLE_DEFAULT_HEIGHT)
         self.hide()
     
     def show_text(self, text: str, duration: int = 3000):
@@ -59,16 +66,16 @@ class SpeechBubble(QWidget):
         
         # 调整气泡大小适应文字（限制最大尺寸防止超出屏幕）
         fm = QFontMetrics(self._label.font())
-        max_width = 180  # 最大宽度限制
-        max_height = 120  # 最大高度限制
-        text_width = min(fm.horizontalAdvance(text) + 24, max_width)
-        text_height = fm.boundingRect(QRect(0, 0, text_width - 24, max_height), 
-                                       Qt.TextWordWrap, text).height() + 16
-        
+        max_width = PetConfig.BUBBLE_MAX_WIDTH
+        max_height = PetConfig.BUBBLE_MAX_HEIGHT
+        text_width = min(fm.horizontalAdvance(text) + PetConfig.BUBBLE_TEXT_PADDING_X, max_width)
+        text_height = fm.boundingRect(QRect(0, 0, text_width - PetConfig.BUBBLE_TEXT_PADDING_X, max_height),
+                                       Qt.TextWordWrap, text).height() + PetConfig.BUBBLE_TEXT_PADDING_Y
+
         # 确保不超出限制
         text_height = min(text_height, max_height)
-        
-        self.setFixedSize(text_width, text_height + 10)  # +10 给箭头留空间
+
+        self.setFixedSize(text_width, text_height + PetConfig.BUBBLE_ARROW_SPACE)  # 给箭头留空间
         self._label.setGeometry(0, 0, text_width, text_height)
         
         self.show()
@@ -77,14 +84,27 @@ class SpeechBubble(QWidget):
         # 重绘气泡形状
         self.update()
         
-        # 定时隐藏
+        # 定时隐藏（主定时器 + 保底定时器）
         self._hide_timer.stop()
         self._hide_timer.start(duration)
+        self._fail_safe_timer.stop()
+        self._fail_safe_timer.start(duration + PetConfig.BUBBLE_FAIL_SAFE_EXTRA)
+
+    def _fail_safe_hide(self):
+        """保底隐藏：主定时器失效时强制隐藏气泡"""
+        if self.isVisible():
+            self.hide()
     
     def set_arrow_direction(self, direction: str):
         """设置箭头方向"""
         self._arrow_direction = direction
-        self.update()  # 重绘
+
+        # 箭头朝上时，文字标签下移到气泡主体区域内居中
+        if direction in ("up", "left-up", "right-up"):
+            a = self._arrow_size
+            self._label.setGeometry(0, a, self.width(), self.height() - a)
+
+        self.update()
     
     def paintEvent(self, event):
         """绘制气泡形状 - 支持多方向箭头"""
@@ -104,7 +124,7 @@ class SpeechBubble(QWidget):
         
         if direction == "down":
             rect = self.rect().adjusted(0, 0, 0, -arrow_size)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向下箭头（底部中央）
             arrow_x = self.width() // 2
             arrow_y = self.height() - arrow_size
@@ -115,7 +135,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "up":
             rect = self.rect().adjusted(0, arrow_size, 0, 0)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向上箭头（顶部中央）
             arrow_x = self.width() // 2
             arrow_y = arrow_size
@@ -126,7 +146,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "right":
             rect = self.rect().adjusted(0, 0, -arrow_size, 0)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向右箭头（右侧中央）
             arrow_x = self.width() - arrow_size
             arrow_y = self.height() // 2
@@ -137,7 +157,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "left":
             rect = self.rect().adjusted(arrow_size, 0, 0, 0)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向左箭头（左侧中央）
             arrow_x = arrow_size
             arrow_y = self.height() // 2
@@ -148,7 +168,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "right-down":
             rect = self.rect().adjusted(0, 0, -arrow_size, -arrow_size)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向右下箭头（右下角，指向右下方宠物）
             arrow = QPolygon([
                 QPoint(self.width() - arrow_size - arrow_size//2, self.height() - arrow_size),
@@ -157,7 +177,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "left-down":
             rect = self.rect().adjusted(0, 0, -arrow_size, -arrow_size)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向左下箭头（左下角，指向左下方宠物）
             arrow = QPolygon([
                 QPoint(arrow_size + arrow_size//2, self.height() - arrow_size),
@@ -166,7 +186,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "right-up":
             rect = self.rect().adjusted(0, arrow_size, -arrow_size, 0)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向右上箭头（右上角）
             arrow = QPolygon([
                 QPoint(self.width() - arrow_size - arrow_size//2, arrow_size),
@@ -175,7 +195,7 @@ class SpeechBubble(QWidget):
             ])
         elif direction == "left-up":
             rect = self.rect().adjusted(0, arrow_size, -arrow_size, 0)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             # 向左上箭头（左上角）
             arrow = QPolygon([
                 QPoint(arrow_size + arrow_size//2, arrow_size),
@@ -185,7 +205,7 @@ class SpeechBubble(QWidget):
         else:
             # 默认向下
             rect = self.rect().adjusted(0, 0, 0, -arrow_size)
-            painter.drawRoundedRect(rect, 8, 8)
+            painter.drawRoundedRect(rect, PetConfig.BUBBLE_BORDER_RADIUS, PetConfig.BUBBLE_BORDER_RADIUS)
             arrow_x = self.width() // 2
             arrow_y = self.height() - arrow_size
             arrow = QPolygon([
@@ -285,8 +305,8 @@ class FloatingText(QWidget):
         """)
         
         # 动画参数
-        self._float_speed = 1  # 浮动速度(像素/帧)
-        self._fade_speed = 1.0 / (3 * 60)  # 3秒消失(60fps)
+        self._float_speed = PetConfig.FLOATING_TEXT_SPEED  # 浮动速度(像素/帧)
+        self._fade_speed = 1.0 / (PetConfig.FLOATING_TEXT_FADE_DURATION / 1000.0 * 60)  # 每帧透明度衰减
         self._opacity = 1.0
         self._target_widget = None
         
@@ -294,7 +314,7 @@ class FloatingText(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_animate)
         
-        self.setFixedSize(100, 30)
+        self.setFixedSize(PetConfig.FLOATING_TEXT_WIDTH, PetConfig.FLOATING_TEXT_HEIGHT)
         self.hide()
     
     def show_value(self, text: str, color: QColor, target_widget: QWidget, offset: QPoint = QPoint(0, -50)):
@@ -320,9 +340,9 @@ class FloatingText(QWidget):
         
         # 自适应大小
         fm = QFontMetrics(self._label.font())
-        text_width = fm.horizontalAdvance(text) + 16
-        self.setFixedSize(text_width, 30)
-        self._label.setGeometry(0, 0, text_width, 30)
+        text_width = fm.horizontalAdvance(text) + PetConfig.BUBBLE_TEXT_PADDING_X
+        self.setFixedSize(text_width, PetConfig.FLOATING_TEXT_HEIGHT)
+        self._label.setGeometry(0, 0, text_width, PetConfig.FLOATING_TEXT_HEIGHT)
         
         # 定位
         self._target_widget = target_widget
@@ -339,7 +359,7 @@ class FloatingText(QWidget):
         self.raise_()
         
         # 启动动画 (60fps)
-        self._timer.start(1000 // 60)
+        self._timer.start(PetConfig.ACTION_FPS_INTERVAL)
     
     def _on_animate(self):
         """动画帧更新"""

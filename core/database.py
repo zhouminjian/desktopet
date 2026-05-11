@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
+from core.config import PetConfig
+
 
 class PetDatabase:
     """
@@ -16,7 +18,7 @@ class PetDatabase:
     处理宠物数据的保存和加载
     """
     
-    SAVE_FILENAME = "pii_save.json"
+    SAVE_FILENAME = PetConfig.SAVE_FILENAME
     
     def __init__(self):
         """初始化数据库"""
@@ -28,9 +30,9 @@ class PetDatabase:
         if os.name == 'nt':  # Windows
             app_data = os.environ.get('APPDATA', '')
             if app_data:
-                save_dir = Path(app_data) / "DesktopPet"
+                save_dir = Path(app_data) / PetConfig.APP_NAME
             else:
-                save_dir = Path.home() / ".desktoppet"
+                save_dir = Path.home() / f".{PetConfig.APP_NAME.lower()}"
         else:  # Linux/Mac
             save_dir = Path.home() / ".desktoppet"
         

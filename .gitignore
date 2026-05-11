@@ -25,6 +25,7 @@ pii_save.json
 Thumbs.db
 .DS_Store
 desktop.ini
+.claude
 
 # 日志
 *.log
@@ -34,8 +35,21 @@ assets/3d/
 ui/viewer_3d.py
 test_3d.py
 3D
-assets/tmp
+
+# 空包标识文件
+__init__.py
+
+# 测试目录
+tests/
 
 # 临时文件
 *.tmp
 quick_check.py
+
+# 资源目录
+assets/
+
+# 发开说明文档
+desktopet技术需求说明文档.md
+desktopet开发文档.md
+desktopet设计方案.md
